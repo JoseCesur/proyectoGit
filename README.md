@@ -7,3 +7,4 @@ AppVersion-0
 
 ## Features
 Añadida feature: feature/mi-feature
+Añadida feature: feature/otra-feature
