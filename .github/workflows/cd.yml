@@ -1,0 +1,72 @@
+name: CD - main
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio en el runner de GitHub
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Subir la versión en el README
+        shell: bash
+        env:
+          EVENTO: ${{ github.event_name }}
+          RAMA_ACTUAL: ${{ github.ref_name }}
+        run: |
+          ULTIMA=$(grep -oE '^AppVersion-[0-9]+' README.md | sed 's/AppVersion-//' | sort -n | tail -1)
+          if [ -z "$ULTIMA" ]; then
+            NUEVA=0
+          else
+            NUEVA=$((ULTIMA + 1))
+          fi
+          FECHA=$(TZ=Europe/Madrid date '+%d/%m/%Y %H:%M')
+          LINEA="AppVersion-$NUEVA - $FECHA"
+          echo "Versión actual: ${ULTIMA:-ninguna} - Nueva: $LINEA"
+          if [ "$EVENTO" = "pull_request" ]; then
+            echo "Pull request abierto: al mergear en main se escribirá '$LINEA'. No se hace commit todavía."
+            exit 0
+          fi
+          if grep -qE '^AppVersion-' README.md; then
+            awk -v l="$LINEA" 'NR==FNR{if($0 ~ /^AppVersion-/) last=FNR; next} {print} FNR==last{print l}' README.md README.md > README.tmp
+            mv README.tmp README.md
+          else
+            echo "$LINEA" >> README.md
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "Despliegue: $LINEA"
+          git push origin HEAD:"$RAMA_ACTUAL"
+          echo "Versión escrita y subida: $LINEA"
+
+  validate-prod:
+    needs: update-readme
+    runs-on: self-hosted
+    steps:
+      - name: Comparar PROD_TOKEN (secret) con LOCAL_PROD_TOKEN (variable local)
+        shell: powershell
+        env:
+          PROD_TOKEN: ${{ secrets.PROD_TOKEN }}
+        run: |
+          $local = [Environment]::GetEnvironmentVariable('LOCAL_PROD_TOKEN', 'User')
+          if (-not $local) { $local = [Environment]::GetEnvironmentVariable('LOCAL_PROD_TOKEN', 'Machine') }
+          Write-Host "Runner: $env:RUNNER_NAME"
+          if ($env:PROD_TOKEN -eq $local) {
+            Write-Host "OK: PROD_TOKEN coincide con LOCAL_PROD_TOKEN. Todo correcto para desplegar."
+          } else {
+            Write-Host "ERROR: PROD_TOKEN NO coincide con LOCAL_PROD_TOKEN. Validacion fallida."
+            exit 1
+          }
