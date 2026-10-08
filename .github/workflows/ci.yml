@@ -1,0 +1,68 @@
+name: CI - develop
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio en el runner de GitHub
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Añadir la feature al README
+        shell: bash
+        env:
+          EVENTO: ${{ github.event_name }}
+          RAMA_PR: ${{ github.head_ref }}
+          RAMA_ACTUAL: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENTO" = "pull_request" ]; then
+            RAMA="$RAMA_PR"
+          else
+            MSG=$(git log -1 --pretty=%s)
+            RAMA=$(echo "$MSG" | sed -n 's#^Merge pull request \#[0-9]* from [^/]*/##p')
+            [ -z "$RAMA" ] && RAMA="$RAMA_ACTUAL (lanzado con $EVENTO)"
+          fi
+          LINEA="Añadida feature: $RAMA"
+          echo "Evento: $EVENTO - Rama: $RAMA"
+          if grep -qxF "$LINEA" README.md; then
+            echo "El README ya tenía la línea: $LINEA"
+            exit 0
+          fi
+          echo "$LINEA" >> README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "README: $LINEA"
+          git push origin HEAD:"${RAMA_PR:-$RAMA_ACTUAL}"
+          echo "Línea añadida y subida: $LINEA"
+
+  validate-dev:
+    needs: update-readme
+    runs-on: self-hosted
+    steps:
+      - name: Comparar DEV_TOKEN (secret) con LOCAL_DEV_TOKEN (variable local)
+        shell: powershell
+        env:
+          DEV_TOKEN: ${{ secrets.DEV_TOKEN }}
+        run: |
+          $local = [Environment]::GetEnvironmentVariable('LOCAL_DEV_TOKEN', 'User')
+          if (-not $local) { $local = [Environment]::GetEnvironmentVariable('LOCAL_DEV_TOKEN', 'Machine') }
+          Write-Host "Runner: $env:RUNNER_NAME"
+          if ($env:DEV_TOKEN -eq $local) {
+            Write-Host "OK: DEV_TOKEN coincide con LOCAL_DEV_TOKEN. Integracion validada."
+          } else {
+            Write-Host "ERROR: DEV_TOKEN NO coincide con LOCAL_DEV_TOKEN. Validacion fallida."
+            exit 1
+          }
