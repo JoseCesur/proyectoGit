@@ -1,0 +1,1 @@
+Segunda feature para probar el fallo de validate-dev (Tarea 09, paso 6).
